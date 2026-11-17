@@ -1,4 +1,4 @@
-name: androidBuil
+name: androidBuild
 
 on:
   workflow_dispatch:
@@ -15,16 +15,15 @@ jobs:
           submodules: recursive
 
       - name: Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: android sdk
-        uses: android-actions/setup-android@v3
-
-      - name: ndks
-        run: sdkmanager --install "build-tools;35.0.0" "ndk;29.0.13113456" "platforms;android-29" "platforms;android-35"
+      - name: NDKs
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install "build-tools;35.0.0" "ndk;29.0.13113456" "platforms;android-29" "platforms;android-35"
 
       - name: Haxe 4.3.7
         uses: krdlab/setup-haxe@v1
@@ -37,7 +36,7 @@ jobs:
           haxelib --global run hmm setup
           hmm install
 
-      - name: line configs
+      - name: lime configs
         run: |
           haxelib run lime config ANDROID_SDK $ANDROID_HOME
           haxelib run lime config ANDROID_NDK_ROOT $ANDROID_HOME/ndk/29.0.13113456
@@ -45,10 +44,13 @@ jobs:
           haxelib run lime config ANDROID_SETUP true
 
       - name: build apk
-        run: haxelib run lime build android -release -arm64
+        run: haxelib run lime build android -release -DEXCLUDE_ARMV7
 
       - name: upload apk
         uses: actions/upload-artifact@v4
         with:
           name: Funkin-Android-APK
-          path: export/release/android/bin/app/build/outputs/apk/**/*.apk
+          path: |
+            export/**/outputs/apk/**/*.apk
+            Export/**/outputs/apk/**/*.apk
+          if-no-files-found: error

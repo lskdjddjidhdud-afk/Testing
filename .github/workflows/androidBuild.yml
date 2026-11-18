@@ -16,7 +16,6 @@ concurrency:
 
 env:
   HAXE_VERSION: 4.3.7
-  NDK_VERSION: 29.0.13113456
 
 jobs:
   android:
@@ -36,41 +35,39 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Haxe
-        uses: krdlab/setup-haxe@v2
+      - name: Setup Android
+        uses: android-actions/setup-android@v3
         with:
-          haxe-version: ${{ env.HAXE_VERSION }}
+          packages: "platform-tools"
 
-      - name: Cache Android SDK
+      - name: Cache Android SDK packages
         id: cache-android-sdk
         uses: actions/cache@v4
         with:
-          path: ~/android-sdk
-          key: androidsdk-ndk${{ env.NDK_VERSION }}-p29-p35-bt35
+          path: |
+            ${{ env.ANDROID_SDK_ROOT }}/ndk
+            ${{ env.ANDROID_SDK_ROOT }}/platforms
+            ${{ env.ANDROID_SDK_ROOT }}/build-tools
+          key: android-sdk-ndk27.2.12479018-platform35-buildtools35.0.0
 
       - name: Install Android SDK
         if: steps.cache-android-sdk.outputs.cache-hit != 'true'
         shell: bash
         run: |
-          mkdir -p "$HOME/android-sdk"
-          curl -sSL -o /tmp/clt.zip https://dl.google.com/android/repository/commandlinetools-linux-12266719_latest.zip
-          unzip -q /tmp/clt.zip -d /tmp/clt
-          CLT="/tmp/clt/cmdline-tools/bin/sdkmanager"
-          yes | "$CLT" --sdk_root="$HOME/android-sdk" --licenses >/dev/null 2>&1 || true
-          "$CLT" --sdk_root="$HOME/android-sdk" \
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --install \
             "platform-tools" \
-            "platforms;android-29" \
             "platforms;android-35" \
             "build-tools;35.0.0" \
-            "ndk;${NDK_VERSION}"
+            "ndk;27.2.12479018"
 
       - name: Configure Android
         shell: bash
         run: |
-          echo "ANDROID_SDK=$HOME/android-sdk" >> "$GITHUB_ENV"
-          echo "ANDROID_HOME=$HOME/android-sdk" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$HOME/android-sdk/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=$HOME/android-sdk/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
           echo "CXXFLAGS=-std=c++20" >> "$GITHUB_ENV"
 
       - name: Install Linux dependencies
@@ -98,69 +95,64 @@ jobs:
             libglu1-mesa-dev \
             pkg-config
 
-      - name: Setup local haxelib repo
-        run: haxelib --never newrepo
+      - name: Setup Haxe
+        uses: krdlab/setup-haxe@v2
+        with:
+          haxe-version: ${{ env.HAXE_VERSION }}
 
       - name: Cache haxelib
         id: cache-haxelib
         uses: actions/cache@v4
         with:
           path: .haxelib
-          key: haxelib-android-v2-${{ hashFiles('hmm.json') }}
+          key: haxelib-android-${{ hashFiles('hmm.json') }}
           restore-keys: |
-            haxelib-android-v2-
+            haxelib-android-
 
       - name: Install HMM
-        run: haxelib install hmm
+        shell: bash
+        run: haxelib install hmm --quiet
 
-      - name: Install dependencies (hmm)
+      - name: Install dependencies
+        shell: bash
         run: haxelib run hmm install
 
-      - name: Fix lime submodules
+      - name: Build hxcpp
+        if: steps.cache-haxelib.outputs.cache-hit != 'true'
         shell: bash
         run: |
-          LIME_DIR=$(haxelib path lime | head -n1)
-          echo "Lime directory: $LIME_DIR"
-          if [ -d "$LIME_DIR/.git" ]; then
-            git -C "$LIME_DIR" submodule update --init --recursive
-            echo "Lime submodules OK"
-          else
-            echo "lime is not a git checkout, skipping"
-          fi
-
-      - name: Build hxcpp tool
-        shell: bash
-        run: |
-          cd .haxelib/hxcpp/git/tools/hxcpp
+          HXCPP_PATH=$(haxelib libpath hxcpp | tr -d '\n')
+          cd "$HXCPP_PATH/tools/hxcpp"
           haxe compile.hxml
 
-      - name: Rebuilding
+      - name: Rebuild Lime
+        if: steps.cache-haxelib.outputs.cache-hit != 'true'
+        shell: bash
+        run: haxelib run lime rebuild cpp
+
+      - name: Setup Lime Android
         shell: bash
         run: |
-          LIME_DIR=$(haxelib path lime | head -n1)
-          if [ -f "$LIME_DIR/ndll/Linux64/lime.ndll" ]; then
-            echo "lime.ndll already exists, skipping rebuild"
-          else
-            haxelib run lime rebuild cpp -64
-          fi
+          haxelib run lime setup android <<EOF
+          $ANDROID_SDK_ROOT
+          $ANDROID_NDK_ROOT
+          $JAVA_HOME
+          EOF
 
-      - name: lime configs
+      - name: Rebuild Lime Android
+        if: steps.cache-haxelib.outputs.cache-hit != 'true'
         shell: bash
-        run: |
-          haxelib run lime config ANDROID_SDK "$ANDROID_SDK"
-          haxelib run lime config ANDROID_NDK_ROOT "$ANDROID_NDK_ROOT"
-          haxelib run lime config JAVA_HOME "$JAVA_HOME"
-          haxelib run lime config
+        run: haxelib run lime rebuild android
 
-      - name: Build APK
-        run: haxelib run lime build android -arm64 -release -DGITHUB_BUILD -DNO_CENSOR_EXPLETIVES
+      - name: Build Android
+        shell: bash
+        run: haxelib run lime build android -arm64 -release -DGITHUB_BUILD
 
-      - name: Upload APK
+      - name: Upload Android
         uses: actions/upload-artifact@v4
         with:
-          name: Funkin-Android
+          name: Funkin
           path: export/release/android/**/*.apk
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
-          

@@ -134,14 +134,6 @@ jobs:
           cd .haxelib/hxcpp/git/tools/hxcpp
           haxe compile.hxml
 
-      - name: lime configs
-        shell: bash
-        run: |
-          haxelib run lime config ANDROID_SDK "$ANDROID_SDK"
-          haxelib run lime config ANDROID_NDK_ROOT "$ANDROID_NDK_ROOT"
-          haxelib run lime config JAVA_HOME "$JAVA_HOME"
-          haxelib run lime config
-
       - name: Rebuilding
         shell: bash
         run: |
@@ -151,6 +143,14 @@ jobs:
           else
             haxelib run lime rebuild cpp -64
           fi
+
+      - name: lime configs
+        shell: bash
+        run: |
+          haxelib run lime config ANDROID_SDK "$ANDROID_SDK"
+          haxelib run lime config ANDROID_NDK_ROOT "$ANDROID_NDK_ROOT"
+          haxelib run lime config JAVA_HOME "$JAVA_HOME"
+          haxelib run lime config
 
       - name: Build APK
         run: haxelib run lime build android -arm64 -release -DGITHUB_BUILD -DNO_CENSOR_EXPLETIVES
@@ -163,3 +163,4 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
+          

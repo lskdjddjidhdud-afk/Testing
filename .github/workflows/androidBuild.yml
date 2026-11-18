@@ -29,7 +29,7 @@ jobs:
             libgl-dev libgl1-mesa-dev libglu1-mesa-dev libdrm-dev libwayland-dev \
             libasound2-dev libpulse-dev
 
-      - name: Set up Android SDK and NDK
+      - name: sdk ndks
         run: |
           ANDROID_HOME="$HOME/android-sdk"
           mkdir -p "$ANDROID_HOME"
@@ -47,19 +47,19 @@ jobs:
 
       - name: Set up Haxe 4.3.7
         run: |
-          curl -sSL -o /tmp/haxe.tar.gz "https://github.com/HaxeFoundation/haxe/releases/download/4.3.7/haxe-4.3.7-linux64.tar.gz"
-          curl -sSL -o /tmp/neko.tar.gz "https://github.com/HaxeFoundation/neko/releases/download/v2-4-0/neko-2.4.0-linux64.tar.gz"
-          mkdir -p "$HOME/haxe" "$HOME/neko" "$HOME/haxelib"
-          tar -xzf /tmp/haxe.tar.gz -C "$HOME/haxe" --strip-components=1
-          tar -xzf /tmp/neko.tar.gz -C "$HOME/neko" --strip-components=1
-          echo "$HOME/haxe" >> "$GITHUB_PATH"
-          echo "$HOME/neko" >> "$GITHUB_PATH"
-          echo "NEKOPATH=$HOME/neko" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=$HOME/neko${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          set -eux
+          curl -sSL -o /tmp/haxe.tar.gz https://github.com/HaxeFoundation/haxe/releases/download/4.3.7/haxe-4.3.7-linux64.tar.gz
+          mkdir -p "$HOME/haxe-toolkit"
+          tar -xzf /tmp/haxe.tar.gz -C "$HOME/haxe-toolkit" --strip-components=1
+          sudo ln -sf "$HOME/haxe-toolkit/haxe" /usr/local/bin/haxe
+          sudo ln -sf "$HOME/haxe-toolkit/haxelib" /usr/local/bin/haxelib
+          echo "$HOME/haxe-toolkit" >> "$GITHUB_PATH"
+          haxe -version
+          haxelib version
+          mkdir -p "$HOME/haxelib"
           haxelib setup "$HOME/haxelib"
-          haxe --version && haxelib version
 
-      - name: Install dependencies (hmm)
+      - name: (hmm)
         run: |
           haxelib git hmm https://github.com/FunkinCrew/hmm.git
           haxelib run hmm install

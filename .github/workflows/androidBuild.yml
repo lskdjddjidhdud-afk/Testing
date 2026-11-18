@@ -1,82 +1,165 @@
-name: androidBuild
+name: AndroidBuild
 
 on:
-  workflow_dispatch:
   push:
-    branches: [ main ]
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HAXE_VERSION: 4.3.7
+  NDK_VERSION: 29.0.13113456
 
 jobs:
-  build:
+  android:
+    name: Android
     runs-on: ubuntu-latest
+
     steps:
-      - name: assets
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 1
 
-      - name: Java 17
+      - name: Setup Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: LinuxAddic
+      - name: Setup Haxe
+        uses: krdlab/setup-haxe@v2
+        with:
+          haxe-version: ${{ env.HAXE_VERSION }}
+
+      - name: Cache Android SDK
+        id: cache-android-sdk
+        uses: actions/cache@v4
+        with:
+          path: ~/android-sdk
+          key: androidsdk-ndk${{ env.NDK_VERSION }}-p29-p35-bt35
+
+      - name: Install Android SDK
+        if: steps.cache-android-sdk.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          mkdir -p "$HOME/android-sdk"
+          curl -sSL -o /tmp/clt.zip https://dl.google.com/android/repository/commandlinetools-linux-12266719_latest.zip
+          unzip -q /tmp/clt.zip -d /tmp/clt
+          CLT="/tmp/clt/cmdline-tools/bin/sdkmanager"
+          yes | "$CLT" --sdk_root="$HOME/android-sdk" --licenses >/dev/null 2>&1 || true
+          "$CLT" --sdk_root="$HOME/android-sdk" \
+            "platform-tools" \
+            "platforms;android-29" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;${NDK_VERSION}"
+
+      - name: Configure Android
+        shell: bash
+        run: |
+          echo "ANDROID_SDK=$HOME/android-sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$HOME/android-sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$HOME/android-sdk/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$HOME/android-sdk/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "CXXFLAGS=-std=c++20" >> "$GITHUB_ENV"
+
+      - name: Install Linux dependencies
+        shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential libc6-dev libffi-dev libdbus-1-dev libudev-dev libgbm-dev \
-            libx11-dev libxi-dev libxext-dev libxinerama-dev libxrandr-dev libxcursor-dev libxss-dev \
-            libgl-dev libgl1-mesa-dev libglu1-mesa-dev libdrm-dev \
-            libasound2-dev libpulse-dev libwayland-dev \
-            libvlc-dev libvlccore-dev libvlccore9
+          sudo apt-get install -y \
+            libdbus-1-dev \
+            libasound2-dev \
+            libudev-dev \
+            libpipewire-0.3-dev \
+            libpulse-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libwayland-bin \
+            wayland-protocols \
+            libx11-dev \
+            libxext-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxss-dev \
+            libgl1-mesa-dev \
+            libglu1-mesa-dev \
+            pkg-config
 
-      - name: Android SDKs NDKs
-        run: |
-          set -e
-          if [ -z "$ANDROID_HOME" ]; then
-            echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> "$GITHUB_ENV"
-            export ANDROID_HOME=/usr/local/lib/android/sdk
-          fi
-          mkdir -p "$ANDROID_HOME"
-          curl -sSL -o /tmp/clt.zip "https://dl.google.com/android/repository/commandlinetools-linux-12266719_latest.zip"
-          rm -rf /tmp/clt && mkdir -p /tmp/clt
-          unzip -q /tmp/clt.zip -d /tmp/clt
-          SDKMGR="/tmp/clt/cmdline-tools/bin/sdkmanager"
-          yes | "$SDKMGR" --sdk_root="$ANDROID_HOME" --licenses > /dev/null || true
-          "$SDKMGR" --sdk_root="$ANDROID_HOME" --install "build-tools;35.0.0" "ndk;29.0.13113456" "platforms;android-29" "platforms;android-35"
+      - name: Setup local haxelib repo
+        run: haxelib --never newrepo
 
-      - name: Haxe 4.3.7
-        uses: krdlab/setup-haxe@v1
+      - name: Cache haxelib
+        id: cache-haxelib
+        uses: actions/cache@v4
         with:
-          haxe-version: 4.3.7
+          path: .haxelib
+          key: haxelib-android-v2-${{ hashFiles('hmm.json') }}
+          restore-keys: |
+            haxelib-android-v2-
 
-      - name: hmm
-        run: |
-          haxelib --global install hmm
-          haxelib --global run hmm setup
-          hmm install
+      - name: Install HMM
+        run: haxelib install hmm
 
-      - name: lime tools + lime.ndll
+      - name: Install dependencies (hmm)
+        run: haxelib run hmm install
+
+      - name: Fix lime submodules
+        shell: bash
         run: |
-          (cd .haxelib/hxcpp/git/tools/hxcpp && haxe compile.hxml)
-          haxelib run lime rebuild cpp -64
-          ls -la .haxelib/lime/git/ndll/Linux64/
+          LIME_DIR=$(haxelib path lime | head -n1)
+          echo "Lime directory: $LIME_DIR"
+          if [ -d "$LIME_DIR/.git" ]; then
+            git -C "$LIME_DIR" submodule update --init --recursive
+            echo "Lime submodules OK"
+          else
+            echo "lime is not a git checkout, skipping"
+          fi
+
+      - name: Build hxcpp tool
+        shell: bash
+        run: |
+          cd .haxelib/hxcpp/git/tools/hxcpp
+          haxe compile.hxml
 
       - name: lime configs
+        shell: bash
         run: |
-          haxelib run lime config ANDROID_SDK "$ANDROID_HOME"
-          haxelib run lime config ANDROID_NDK_ROOT "$ANDROID_HOME/ndk/29.0.13113456"
+          haxelib run lime config ANDROID_SDK "$ANDROID_SDK"
+          haxelib run lime config ANDROID_NDK_ROOT "$ANDROID_NDK_ROOT"
           haxelib run lime config JAVA_HOME "$JAVA_HOME"
-          haxelib run lime config ANDROID_SETUP true
+          haxelib run lime config
 
-      - name: build apk
-        run: haxelib run lime build android -release -DEXCLUDE_ARMV7
+      - name: Rebuilding
+        shell: bash
+        run: |
+          LIME_DIR=$(haxelib path lime | head -n1)
+          if [ -f "$LIME_DIR/ndll/Linux64/lime.ndll" ]; then
+            echo "lime.ndll already exists, skipping rebuild"
+          else
+            haxelib run lime rebuild cpp -64
+          fi
 
-      - name: upload apk
+      - name: Build APK
+        run: haxelib run lime build android -arm64 -release -DGITHUB_BUILD -DNO_CENSOR_EXPLETIVES
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Funkin-Android-APK
-          path: |
-            export/**/outputs/apk/**/*.apk
-            Export/**/outputs/apk/**/*.apk
+          name: Funkin-Android
+          path: export/release/android/**/*.apk
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
